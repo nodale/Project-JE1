@@ -123,7 +123,6 @@ struct BladeSection {
     double twist;
 };
 
-// ---------------------- BEMT Chord & Twist Solver (Bell Curve Lift) ----------------------
 void computeChordTwistBEMT(
         double R, double Rhub, int B, double T, double rho, double rpm, int N,
         Vec& r_out, Vec& chord_out, Vec& alpha_out)
@@ -138,55 +137,81 @@ void computeChordTwistBEMT(
     }
 
     // ---------------- Bell curve parameters ----------------
-    double r_peak = Rhub + 0.7*(R - Rhub);      // peak lift at 65% span
-    double sigma = 0.42*(R - Rhub);              // width of bell curve
+    double r_peak = Rhub + 0.7*(R - Rhub);
+    double sigma = 0.4*(R - Rhub);
 
-    // ---------------- Compute total lift per blade ----------------
-    // Integrate Gaussian approximately to scale Lmax
+    // Approximate lift distribution scaling
     double area = 0.0;
     for(int i=0;i<N;++i){
         double r = r_out[i];
-        double L_factor = std::exp(-0.5*std::pow((r - r_peak)/sigma,2));
-        area += L_factor;
+        area += std::exp(-0.5*std::pow((r - r_peak)/sigma,2));
     }
-    double L_scale = (T / B) / (area * (R - Rhub)/N);  // scale factor to match total thrust per blade
+    double L_scale = (T / B) / (area * (R - Rhub)/N);  // N/m per blade
 
     // ---------------- Compute chord and twist per station ----------------
     for(int i=0; i<N; ++i){
         double r = r_out[i];
         double Lprime_r = L_scale * std::exp(-0.5*std::pow((r - r_peak)/sigma,2));
 
-        // Hover assumption: axial flow ~0
-        double Vrel = omega * r;       // tangential velocity
-        double phi = 0.0;              // inflow angle ~0
-        double theta = 20.0*DEG2RAD;   // initial guess for geometric pitch
+        // Initial guesses
+        double a = 0.04, ap = 0.01;
+        double theta = 20.0 * DEG2RAD;
 
-        // ---------------- Compute chord ----------------
-        double alpha = theta - phi;
-        double Cl = Airfoil::Cl(alpha);
-        double c = 2.0*Lprime_r/(rho*Vrel*Vrel*Cl);
-        // ---------------- Compute geometric pitch ----------------
-        double alpha_desired = 18.0*DEG2RAD; // small positive AoA
-        double theta_geom = phi + alpha_desired;
+        for(int iter=0; iter<250; ++iter){
+            double Vax = omega * r * a + 1e-6;
+            double Vtan = omega * r * (1.0 - ap);
+            double Vrel = std::sqrt(Vax*Vax + Vtan*Vtan);
+            double phi = std::atan2(Vax, Vtan);
+            double alpha = theta - phi;
 
-        chord_out[i] = c;
-        alpha_out[i] = theta_geom*RAD2DEG;
+            double Cl = Airfoil::Cl(alpha);
+            double Cd = Airfoil::Cd(alpha);
+
+            double L = 0.5*rho*Vrel*Vrel*Cl;  // per unit chord
+            double D = 0.5*rho*Vrel*Vrel*Cd;
+
+            double Fn = L*std::cos(phi) - D*std::sin(phi);
+            double Ft = L*std::sin(phi) + D*std::cos(phi);
+
+            double sigma = B / (2*PI*r) * chord_out[i];
+            double a_new = Fn / (4*PI*r*rho*Vrel*Vrel + 1e-6);
+            double ap_new = Ft / (4*PI*r*rho*Vrel*Vtan + 1e-6);
+
+            a = 0.7*a + 0.3*a_new;
+            ap = 0.7*ap + 0.3*ap_new;
+        }
+
+        // Compute chord to match local lift
+        double Vax_final = omega * r * a + 1e-6;
+        double Vtan_final = omega * r * (1.0 - ap);
+        double Vrel_final = std::sqrt(Vax_final*Vax_final + Vtan_final*Vtan_final);
+        double phi_final = std::atan2(Vax_final, Vtan_final);
+
+        double alpha_desired = 16.0 * DEG2RAD; // target AoA
+        double theta_geom = phi_final + alpha_desired;
+
+        double Cl_final = Airfoil::Cl(alpha_desired);
+        double c = 2.0 * Lprime_r / (rho * Vrel_final * Vrel_final * Cl_final + 1e-6);
+
+        chord_out[i] = c;  // m
+        alpha_out[i] = theta_geom * RAD2DEG;
     }
 }
+
 
 // ---------------------- MAIN ----------------------
 int main(){
     // ---------------------- User Inputs ----------------------
     double R = 0.14;
     double Rhub = 0.04;
-    int B = 3;
-    double T = 24.0;
+    int B = 4;
+    double T = 18.0;
     double rho = 1.225;
     double rpm = 6500;
-    int N = 40;
+    int N = 80;
 
-    double disX = 0.04, disY = 0.20, backFat=1.12;
-    double offset_root_frac = 0.0, offset_tip_frac = -0.15;
+    double disX = 0.04, disY = 0.18, backFat=1.08;
+    double offset_root_frac = 0.0, offset_tip_frac = -0.1;
 
     // ---------------------- Airfoil ----------------------
     std::vector<double> px, py;
