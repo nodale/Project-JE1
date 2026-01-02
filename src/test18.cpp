@@ -1,332 +1,226 @@
-// ============================================================
-//  PHYSICALLY CONSISTENT ROTOR / AIRFOIL SOLVER
-//  - Joukowski airfoil
-//  - Vortex panel method
-//  - Prandtl lifting-line theory
-//  - Induced velocity
-//  - STL output
-//
-//  Author: (rewritten for correctness)
-// ============================================================
-
+// propeller_bemt_full.cpp
+// Build: g++ -std=c++17 -O2 propeller_bemt_full.cpp -o propeller_bemt_full
 #include <cmath>
 #include <vector>
-#include <iostream>
+#include <array>
 #include <fstream>
+#include <iostream>
 #include <iomanip>
-#include <stdexcept>
 #include <algorithm>
+#include <complex>
 
-constexpr double PI = 3.141592653589793;
-constexpr double DEG2RAD = PI / 180.0;
+constexpr double PI = 3.14159265358979323846;
+constexpr double DEG2RAD = PI/180.0;
+constexpr double RAD2DEG = 180.0/PI;
 
-// ============================================================
-// JOUKOWSKI AIRFOIL
-// ============================================================
+using Vec = std::vector<double>;
+using Vec3 = std::array<double,3>;
 
-void generateJoukowski(
-        int N,
-        double x0,
-        double y0,
-        std::vector<double>& x,
-        std::vector<double>& y)
-{
-    const double a = 1.0;
-    x.resize(N);
-    y.resize(N);
+// ---------------------- Airfoil Model ----------------------
+struct Airfoil {
+    static double Cl(double alpha) {
+        // thin airfoil approx, alpha in rad
+        return 2.0 * PI * alpha;
+    }
+    static double Cd(double alpha) {
+        return 0.008 + 0.02*alpha*alpha;
+    }
+};
 
-    for (int i = 0; i < N; ++i)
-    {
-        double th = 2.0 * PI * i / (N - 1);
-        double zr = a * cos(th) + x0;
-        double zi = a * sin(th) + y0;
+// ---------------------- Joukowsky Airfoil ----------------------
+void genJoukowsky(double disX, double disY, double backFat, int resolution, Vec& px, Vec& py) {
+    px.clear(); py.clear(); px.reserve(resolution); py.reserve(resolution);
+    double r = 1.0;
+    double shape = 1.0;
+    std::complex<double> center(disX, disY);
 
-        double r2 = zr*zr + zi*zi;
-        double xr = zr + a*a * zr / r2;
-        double yi = zi - a*a * zi / r2;
+    double extraR = std::sqrt(std::pow(r - std::abs(center.real()),2.0) + std::pow(center.imag(),2.0));
 
-        x[i] = xr;
-        y[i] = yi;
+    for(int i=0;i<resolution;++i){
+        double theta = -PI + 2.0*PI*i/(resolution);
+        std::complex<double> z(extraR*cos(theta)/backFat + center.real(),
+                               extraR*sin(theta)/backFat + center.imag());
+        std::complex<double> air = z + std::pow(shape,2)/z;
+        double X = 0.25*(air.real() + 2.0);
+        double Y = 0.25*air.imag();
+        px.push_back(X); py.push_back(Y);
     }
 }
-double solvePanelCl(
-    const std::vector<double>& x,
-    const std::vector<double>& y,
-    double alpha)
+
+// ---------------------- Blade Geometry ----------------------
+std::vector<std::vector<Vec3>> buildBladeGeometry(
+        const Vec& r, const Vec& chord, const Vec& twist,
+        const std::vector<std::array<double,2>>& baseAirfoil,
+        double offset_root_frac, double offset_tip_frac)
 {
-    const int N = x.size() - 1;   // closed contour
-    const double Vinf = 1.0;
+    int NR = r.size();
+    int NP = baseAirfoil.size();
+    std::vector<std::vector<Vec3>> rings(NR,std::vector<Vec3>(NP));
 
-    std::vector<double> xc(N), yc(N), phi(N), S(N);
+    for(int i=0;i<NR;++i){
+        double c = chord[i];
+        double t = -twist[i];
+        double ct = std::cos(t), st = std::sin(t);
 
-    for (int i = 0; i < N; ++i)
-    {
-        double dx = x[i+1] - x[i];
-        double dy = y[i+1] - y[i];
-        S[i] = std::sqrt(dx*dx + dy*dy);
-        phi[i] = std::atan2(dy, dx);
-        xc[i] = 0.5 * (x[i+1] + x[i]);
-        yc[i] = 0.5 * (y[i+1] + y[i]);
-    }
+        double frac = (r[i]-r.front())/(r.back()-r.front());
+        double cof = offset_root_frac + (offset_tip_frac - offset_root_frac)*frac;
+        double xshift = cof*c;
 
-    // Influence matrix
-    std::vector<std::vector<double>> A(N, std::vector<double>(N, 0.0));
-    std::vector<double> b(N, 0.0);
+        for(int j=0;j<NP;++j){
+            double x = baseAirfoil[j][0]*c - xshift;
+            double y = baseAirfoil[j][1]*c;
 
-    for (int i = 0; i < N; ++i)
-    {
-        for (int j = 0; j < N; ++j)
-        {
-            if (i == j)
-            {
-                A[i][j] = 0.5;   // SELF INFLUENCE (CRITICAL)
-                continue;
-            }
+            double xr = x*ct - y*st;
+            double yr = x*st + y*ct;
 
-            double dx = xc[i] - x[j];
-            double dy = yc[i] - y[j];
-            double r2 = dx*dx + dy*dy;
+            double theta = 0.0;
+            double cr = std::cos(theta), sr = std::sin(theta);
 
-            A[i][j] = -(1.0 / (2 * M_PI)) *
-                      (dx * sin(phi[j]) - dy * cos(phi[j])) / r2;
-        }
-
-        b[i] = -Vinf * sin(phi[i] - alpha);
-    }
-
-    // Enforce Kutta condition:
-    // Replace last equation
-    for (int j = 0; j < N; ++j)
-        A[N-1][j] = 0.0;
-
-    A[N-1][0] = 1.0;
-    A[N-1][N-1] = 1.0;
-    b[N-1] = 0.0;
-
-    // Solve by Gaussian elimination
-    for (int i = 0; i < N; ++i)
-    {
-        double pivot = A[i][i];
-        if (std::abs(pivot) < 1e-10)
-            throw std::runtime_error("Singular matrix");
-
-        for (int j = i; j < N; ++j)
-            A[i][j] /= pivot;
-        b[i] /= pivot;
-
-        for (int k = 0; k < N; ++k)
-        {
-            if (k == i) continue;
-            double f = A[k][i];
-            for (int j = i; j < N; ++j)
-                A[k][j] -= f * A[i][j];
-            b[k] -= f * b[i];
+            Vec3 e_r{cr,sr,0.0}, e_t{-sr,cr,0.0}, e_z{0.0,0.0,1.0};
+            Vec3 P{ r[i]*e_r[0] + xr*e_t[0] + yr*e_z[0],
+                    r[i]*e_r[1] + xr*e_t[1] + yr*e_z[1],
+                    r[i]*e_r[2] + xr*e_t[2] + yr*e_z[2] };
+            rings[i][j] = P;
         }
     }
-
-    // Circulation
-    double Gamma = 0.0;
-    for (int i = 0; i < N; ++i)
-        Gamma += b[i] * S[i];
-
-    double chord =
-        *std::max_element(x.begin(), x.end()) -
-        *std::min_element(x.begin(), x.end());
-
-    return 2.0 * Gamma / (Vinf * chord);
+    return rings;
 }
 
+// ---------------------- STL Writing ----------------------
+void writeSTL(const std::string& filename,const std::vector<std::vector<Vec3>>& bladeRings){
+    std::ofstream out(filename);
+    out << "solid blade\n";
+    int NR = bladeRings.size();
+    int NP = bladeRings[0].size();
 
-void liftingLine(
-        int N,
-        double R,
-        double V,
-        double alpha0,
-        std::vector<double>& r,
-        std::vector<double>& chord)
-{
-    r.resize(N);
-    chord.resize(N);
+    auto writeTri=[&](Vec3 a,Vec3 b,Vec3 c){
+        Vec3 u{b[0]-a[0],b[1]-a[1],b[2]-a[2]};
+        Vec3 v{c[0]-a[0],c[1]-a[1],c[2]-a[2]};
+        Vec3 n{u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0]};
+        out<<"  facet normal "<<n[0]<<" "<<n[1]<<" "<<n[2]<<"\n";
+        out<<"    outer loop\n";
+        out<<"      vertex "<<a[0]<<" "<<a[1]<<" "<<a[2]<<"\n";
+        out<<"      vertex "<<b[0]<<" "<<b[1]<<" "<<b[2]<<"\n";
+        out<<"      vertex "<<c[0]<<" "<<c[1]<<" "<<c[2]<<"\n";
+        out<<"    endloop\n  endfacet\n";
+    };
 
-    std::vector<double> A(N,0.0);
-
-    for (int i = 0; i < N; ++i)
-    {
-        double theta = PI * (i + 1) / (N + 1);
-        r[i] = 0.5 * R * (1 - cos(theta));
-
-        A[i] = (alpha0) / (PI * (i+1));
+    for(int i=0;i<NR-1;++i){
+        for(int j=0;j<NP;++j){
+            int jn = (j+1)%NP;
+            writeTri(bladeRings[i][j],bladeRings[i+1][j],bladeRings[i+1][jn]);
+            writeTri(bladeRings[i][j],bladeRings[i+1][jn],bladeRings[i][jn]);
+        }
     }
-
-    for (int i = 0; i < N; ++i)
-    {
-        double Gamma = 2 * R * V * A[i];
-        chord[i] = Gamma / (0.5 * V * V);
-    }
+    out << "endsolid blade\n";
+    out.close();
 }
 
+// ---------------------- BEMT Chord & Twist Solver ----------------------
 struct BladeSection {
     double r;
     double chord;
-    double twist_deg;
+    double twist;
 };
 
-std::vector<BladeSection> generatePropellerBlade(
-    int N,
-    double R,
-    double rpm,
-    double rho,
-    double thrust,
-    double Cl_design,
-    double alpha0_rad)
+void computeChordTwistBEMT(
+        double R,double Rhub,int B,double T,double rho,double rpm,int N,
+        Vec& r_out, Vec& chord_out, Vec& alpha_out)
 {
-    std::vector<BladeSection> blade(N);
+    double omega = rpm*2*PI/60.0;
+    r_out.resize(N); chord_out.resize(N); alpha_out.resize(N);
 
-    double omega = rpm * 2.0 * M_PI / 60.0;
-    double vi = std::sqrt(thrust / (2.0 * rho * M_PI * R * R));
-
-    // Compute circulation scale
-    double Gamma0 = thrust / (rho * 2.0 * M_PI * R);
-
-    for (int i = 0; i < N; ++i)
-    {
-        double mu = (i + 1.0) / (N + 1.0);
-        double r = mu * R;
-
-        // Prandtl optimal circulation
-        double Gamma = Gamma0 * std::sqrt(1.0 - mu * mu);
-
-        double V = std::sqrt((omega * r)*(omega * r) + vi*vi);
-
-        // Chord from lift
-        double chord = 2.0 * Gamma / (V * Cl_design);
-
-        // Inflow angle
-        double phi = std::atan2(vi, omega * r);
-
-        // Twist = inflow + alpha
-        double twist = phi + alpha0_rad;
-
-        blade[i] = {
-            r,
-            chord,
-            twist * 180.0 / M_PI
-        };
+    // Radial stations
+    for(int i=0;i<N;++i){
+        double mu = (i+0.5)/N;
+        r_out[i] = Rhub + mu*(R - Rhub);
     }
 
-    return blade;
-}
-struct Vec3 {
-    double x,y,z;
-};
+    // BEMT per station
+    for(int i=0;i<N;++i){
+        double r = r_out[i];
+        double a = 0.3, ap=0.01;
+        double theta = 20.0*DEG2RAD; // initial guess for geometric pitch
 
-std::vector<std::vector<Vec3>>
-buildBlade(
-    const std::vector<double>& r,
-    const std::vector<double>& chord,
-    const std::vector<double>& twist_deg,
-    const std::vector<double>& airfoil_x,
-    const std::vector<double>& airfoil_y)
-{
-    int Nr = r.size();
-    int Np = airfoil_x.size();
+        for(int iter=0;iter<50;++iter){
+            double Vax = 0.0*(1+a)+1e-6;
+            double Vtan = omega*r*(1.0 - ap);
+            double Vrel = std::sqrt(Vax*Vax + Vtan*Vtan);
+            double phi = std::atan2(Vax,Vtan);
+            double alpha = theta - phi;
+            double Cl = Airfoil::Cl(alpha);
+            double Cd = Airfoil::Cd(alpha);
 
-    std::vector<std::vector<Vec3>> blade(Nr,
-        std::vector<Vec3>(Np));
+            double L = 0.5*rho*Vrel*Vrel*Cl; // per unit chord
+            double D = 0.5*rho*Vrel*Vrel*Cd;
 
-    for (int i = 0; i < Nr; ++i)
-    {
-        double c = chord[i];
-        double t = twist_deg[i] * M_PI / 180.0;
+            double Fn = L*std::cos(phi)-D*std::sin(phi);
+            double Ft = L*std::sin(phi)+D*std::cos(phi);
 
-        double ct = cos(t);
-        double st = sin(t);
+            double sigma = B*1.0/(2*PI*r); // chord unknown
+            double a_new = Fn/(4*PI*r*rho*Vrel*Vrel + 1e-6);
+            double ap_new = Ft/(4*PI*r*rho*Vrel*Vtan + 1e-6);
 
-        for (int j = 0; j < Np; ++j)
-        {
-            double x = airfoil_x[j] * c;
-            double y = airfoil_y[j] * c;
-
-            // rotate by twist
-            double xr =  x * ct - y * st;
-            double zr =  x * st + y * ct;
-
-            blade[i][j] = {
-                r[i],
-                xr,
-                zr
-            };
-        }
-    }
-    return blade;
-}
-void writeSTL(
-    const std::string& filename,
-    const std::vector<std::vector<Vec3>>& blade)
-{
-    std::ofstream out(filename);
-    out << "solid blade\n";
-
-    int N = blade.size();
-    int M = blade[0].size();
-
-    auto writeTri = [&](Vec3 a, Vec3 b, Vec3 c)
-    {
-        Vec3 u{b.x-a.x, b.y-a.y, b.z-a.z};
-        Vec3 v{c.x-a.x, c.y-a.y, c.z-a.z};
-        Vec3 n{
-            u.y*v.z - u.z*v.y,
-            u.z*v.x - u.x*v.z,
-            u.x*v.y - u.y*v.x
-        };
-
-        out << " facet normal " << n.x << " " << n.y << " " << n.z << "\n";
-        out << "  outer loop\n";
-        out << "   vertex " << a.x << " " << a.y << " " << a.z << "\n";
-        out << "   vertex " << b.x << " " << b.y << " " << b.z << "\n";
-        out << "   vertex " << c.x << " " << c.y << " " << c.z << "\n";
-        out << "  endloop\n endfacet\n";
-    };
-
-    for (int i = 0; i < N-1; ++i)
-        for (int j = 0; j < M-1; ++j)
-        {
-            writeTri(blade[i][j], blade[i+1][j], blade[i+1][j+1]);
-            writeTri(blade[i][j], blade[i+1][j+1], blade[i][j+1]);
+            a = 0.7*a + 0.3*a_new;
+            ap = 0.7*ap + 0.3*ap_new;
         }
 
-    out << "endsolid blade\n";
+        // Compute chord to match thrust T/B
+        double Vax = omega*r*0.0 + 1e-6;
+        double Vtan = omega*r*(1.0 - ap);
+        double Vrel = std::sqrt(Vax*Vax + Vtan*Vtan);
+        double phi = std::atan2(Vax,Vtan);
+        double alpha = theta - phi;
+        double Cl = Airfoil::Cl(alpha);
+
+        double Lprime = T/(B*(R - Rhub)); // N/m per blade
+        double c = 2.0*Lprime/(rho*Vrel*Vrel*Cl + 1e-6); // physical chord
+        chord_out[i] = c;
+        alpha_out[i] = theta/DEG2RAD; // store geometric pitch in deg
+    }
 }
 
+// ---------------------- MAIN ----------------------
+int main(){
+    // ---------------------- User Inputs ----------------------
+    double R = 0.16;
+    double Rhub = 0.04;
+    int B = 3;
+    double T = 18.0;
+    double rho = 1.225;
+    double rpm = 6500;
+    int N = 40;
 
-int main()
-{
-    // --- Airfoil
-    std::vector<double> ax, ay;
-    generateJoukowski(120, 0.08, 0.1, ax, ay);
+    double disX = 0.04, disY = 0.20, backFat=1.12;
+    double offset_root_frac = 0.0, offset_tip_frac = -0.15;
 
-    // --- Blade physics
-    auto blade = generatePropellerBlade(
-        40,        // radial stations
-        0.14,      // radius
-        6500,      // RPM
-        1.225,     // rho
-        36.0,      // thrust
-        0.8,       // Cl
-        -4.0 * M_PI/180.0
-    );
+    // ---------------------- Airfoil ----------------------
+    std::vector<double> px, py;
+    genJoukowsky(disX, disY, backFat, 80, px, py);
+    std::vector<std::array<double,2>> airfoilPts;
+    for(size_t i=0;i<px.size();++i) airfoilPts.push_back({px[i],py[i]});
 
-    std::vector<double> r, c, t;
-    for (auto& b : blade) {
-        r.push_back(b.r);
-        c.push_back(b.chord);
-        t.push_back(b.twist_deg);
-    }
+    // ---------------------- BEMT ----------------------
+    std::vector<double> r_stations, chord_stations, alpha_stations;
+    computeChordTwistBEMT(R,Rhub,B,T,rho,rpm,N,r_stations,chord_stations,alpha_stations);
 
-    auto geom = buildBlade(r, c, t, ax, ay);
+    // ---------------------- Build STL ----------------------
+    Vec twist_rad(alpha_stations.size());
+    for(size_t i=0;i<alpha_stations.size();++i) twist_rad[i] = alpha_stations[i]*DEG2RAD;
 
-    writeSTL("propeller.stl", geom);
+    auto rings = buildBladeGeometry(r_stations,chord_stations,twist_rad,airfoilPts,
+                                    offset_root_frac,offset_tip_frac);
+    writeSTL("blade.stl",rings);
 
-    std::cout << "STL written: propeller.stl\n";
+    // ---------------------- Output Data ----------------------
+    std::ofstream ofs("constant_gamma_twist.dat");
+    ofs<<std::setprecision(10)<<"# r(m) alpha_deg chord(m)\n";
+    for(int i=0;i<N;++i)
+        ofs<<r_stations[i]<<" "<<alpha_stations[i]<<" "<<chord_stations[i]<<"\n";
+    ofs.close();
+
+    std::cout<<"✔ Blade STL generated: blade.stl\n";
+    std::cout<<"✔ Chord & twist data: constant_gamma_twist.dat\n";
+    return 0;
 }
 
