@@ -22,79 +22,50 @@ constexpr double PI = 3.14159265358979323846;
 constexpr double RadToDegree = 180.0 / PI;
 constexpr double DegreeToRad = PI / 180.0;
 
-void closeRingUpDown(
-    std::ofstream& out,
-    const std::vector<Vec3>& ring)
+void closeRingUpDown(std::ofstream& out, const std::vector<Vec3>& ring)
 {
     int N = ring.size();
     if (N < 4) return;
 
-    // --------------------------------
-    // 1) detect leading and trailing edges
-    // --------------------------------
-    // assume X is chordwise
-    int i_le = 0, i_te = 0;
-    double x_le = ring[0][0];
-    double x_te = ring[0][0];
-    for (int i = 1; i < N; ++i) {
-        if (ring[i][0] < x_le) { x_le = ring[i][0]; i_le = i; }
-        if (ring[i][0] > x_te) { x_te = ring[i][0]; i_te = i; }
+    // detect leading/trailing edges
+    int i_le=0, i_te=0;
+    double x_le=ring[0][0], x_te=ring[0][0];
+    for(int i=1;i<N;++i){
+        if(ring[i][0]<x_le){ x_le=ring[i][0]; i_le=i; }
+        if(ring[i][0]>x_te){ x_te=ring[i][0]; i_te=i; }
     }
 
-    // --------------------------------
-    // 2) split upper / lower
-    // --------------------------------
     std::vector<int> upper_idx, lower_idx;
-    int i = i_le;
-    while (i != i_te) {
-        upper_idx.push_back(i);
-        i = (i + 1) % N;
-    }
-    upper_idx.push_back(i_te); // include TE
+    int i=i_le;
+    while(i!=i_te){ upper_idx.push_back(i); i=(i+1)%N; }
+    upper_idx.push_back(i_te);
 
-    i = i_te;
-    while (i != i_le) {
-        lower_idx.push_back(i);
-        i = (i + 1) % N;
-    }
+    i=i_te;
+    while(i!=i_le){ lower_idx.push_back(i); i=(i+1)%N; }
     lower_idx.push_back(i_le);
 
-    // --------------------------------
-    // 3) write triangles in up-down zipper
-    // --------------------------------
-    auto writeTri = [&](Vec3 a, Vec3 b, Vec3 c){
-        Vec3 u = {b[0]-a[0], b[1]-a[1], b[2]-a[2]};
-        Vec3 v = {c[0]-a[0], c[1]-a[1], c[2]-a[2]};
-        Vec3 n = { u[1]*v[2] - u[2]*v[1],
-                   u[2]*v[0] - u[0]*v[2],
-                   u[0]*v[1] - u[1]*v[0] };
-        out << "  facet normal " << n[0] << " " << n[1] << " " << n[2] << "\n";
-        out << "    outer loop\n";
-        out << "      vertex " << a[0] << " " << a[1] << " " << a[2] << "\n";
-        out << "      vertex " << b[0] << " " << b[1] << " " << b[2] << "\n";
-        out << "      vertex " << c[0] << " " << c[1] << " " << c[2] << "\n";
-        out << "    endloop\n";
-        out << "  endfacet\n";
+    auto writeTri=[&](Vec3 a,Vec3 b,Vec3 c){
+        Vec3 u={b[0]-a[0],b[1]-a[1],b[2]-a[2]};
+        Vec3 v={c[0]-a[0],c[1]-a[1],c[2]-a[2]};
+        Vec3 n={ u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0] };
+        out<<"  facet normal "<<n[0]<<" "<<n[1]<<" "<<n[2]<<"\n";
+        out<<"    outer loop\n";
+        out<<"      vertex "<<a[0]<<" "<<a[1]<<" "<<a[2]<<"\n";
+        out<<"      vertex "<<b[0]<<" "<<b[1]<<" "<<b[2]<<"\n";
+        out<<"      vertex "<<c[0]<<" "<<c[1]<<" "<<c[2]<<"\n";
+        out<<"    endloop\n  endfacet\n";
     };
 
-    int Nu = upper_idx.size();
-    int Nl = lower_idx.size();
-    int iU = 0, iL = 0;
-
-    while (iU + 1 < Nu && iL + 1 < Nl) {
-        int u0 = upper_idx[iU], u1 = upper_idx[iU+1];
-        int l0 = lower_idx[iL], l1 = lower_idx[iL+1];
-
-        // triangle 1: upper → lower → lower next
-        writeTri(ring[u0], ring[l0], ring[l1]);
-
-        // triangle 2: upper → lower next → upper next
-        writeTri(ring[u0], ring[l1], ring[u1]);
-
-        ++iU;
-        ++iL;
+    int iU=0,iL=0;
+    while(iU+1<upper_idx.size() && iL+1<lower_idx.size()){
+        int u0=upper_idx[iU], u1=upper_idx[iU+1];
+        int l0=lower_idx[iL], l1=lower_idx[iL+1];
+        writeTri(ring[u0],ring[l0],ring[l1]);
+        writeTri(ring[u0],ring[l1],ring[u1]);
+        ++iU; ++iL;
     }
 }
+
 std::vector<std::vector<Vec3>> buildBladeGeometry(
         const std::vector<double>& r,
         const std::vector<double>& chord,
@@ -649,34 +620,34 @@ int main()
         int resolution = 80;      // number of sample points around circle -> approximate panels
         double disX = 0.04;        // x-offset of circle center (negative/positive shapes camber)
         double disY = 0.20;        // y-offset of circle center
-        double backFat = 1.04;     // 'backFat' scaling parameter used in generation
+        double backFat = 1.12;     // 'backFat' scaling parameter used in generation
         double AoA_deg = 0.0;    // angle of attack in degrees (used as alpha root default)
 
         // blade radial / lifting-line parameters
         double r0 = 0.03;          // hub radius (m)
-        double r1 = 0.12;           // tip radius (m)
+        double r1 = 0.14;           // tip radius (m)
         int nRadial = 40;           // number of radial collocation stations for lifting-line
         double rpm = 6500.0;        // rotational speed (kept for potential later use)
 
         double rho = 1.225;         // air density
-        double T = 20.0;            // rotor thrust in N (example)
+        double T = 36.0;            // rotor thrust in N (example)
         double R = r1;              // rotor tip radius from your code
-        int B = 4;                   // number of blades (adjust as needed)
+        int B = 3;                   // number of blades (adjust as needed)
 
         double rotorArea = 3.14159265358979323846 * R * R;
         double Vinf = std::sqrt(T / (2.0 * rho * rotorArea)); // hover inflow
 
         // desired sectional lift (N/m) -> constant across span
         double Lprime_const_N_per_m = T / (B * (r1 - r0)); // distribute total lift across blades
-        double k = 4.0; // tip/root ratio
+        double k = 6.0; // tip/root ratio
         double Lprime_avg = Lprime_const_N_per_m; // from previous constant lift
         double Lprime_root = 2.0 * Lprime_avg / (1.0 + k);
         double Lprime_tip = k * Lprime_root;
 
 
         // prescribed geometric alpha distribution (deg) at root and tip
-        double alpha_root_deg = -32.0;
-        double alpha_tip_deg = -26.0; 
+        double alpha_root_deg = -24.0;
+        double alpha_tip_deg = -6.0; 
 
         // chord bounds (manufacturable)
         double c_min = 0.016;
@@ -734,7 +705,7 @@ int main()
 
         std::vector<double> twist_rad(alpha_stations_deg.size());
         for (size_t i = 0; i < alpha_stations_deg.size(); ++i)
-            twist_rad[i] = alpha_stations_deg[i] * DegreeToRad;
+            twist_rad[i] = -alpha_stations_deg[i] * DegreeToRad;
 
         auto rings = buildBladeGeometry(
                 r_stations,
