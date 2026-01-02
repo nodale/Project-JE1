@@ -123,70 +123,66 @@ struct BladeSection {
     double twist;
 };
 
+// ---------------------- BEMT Chord & Twist Solver (Revised) ----------------------
 void computeChordTwistBEMT(
-        double R,double Rhub,int B,double T,double rho,double rpm,int N,
+        double R, double Rhub, int B, double T, double rho, double rpm, int N,
         Vec& r_out, Vec& chord_out, Vec& alpha_out)
 {
-    double omega = rpm*2*PI/60.0;
+    double omega = rpm * 2.0 * PI / 60.0;  // rad/s
     r_out.resize(N); chord_out.resize(N); alpha_out.resize(N);
 
-    // Radial stations
-    for(int i=0;i<N;++i){
-        double mu = (i+0.5)/N;
-        r_out[i] = Rhub + mu*(R - Rhub);
+    // ---------------- Radial stations ----------------
+    for(int i=0; i<N; ++i){
+        double mu = (i + 0.5)/N;
+        r_out[i] = Rhub + mu * (R - Rhub);
     }
 
-    // BEMT per station
-    for(int i=0;i<N;++i){
+    // ---------------- Compute total lift per blade ----------------
+    // Linear lift distribution from hub (0) to tip (max)
+    double L_total_per_blade = T / B;
+
+    // maximum sectional lift at tip
+    double Lprime_tip = 2.0 * L_total_per_blade / (R - Rhub); // rough scaling
+
+    // ---------------- Compute chord and twist per station ----------------
+    for(int i=0; i<N; ++i){
         double r = r_out[i];
-        double a = 0.3, ap=0.01;
-        double theta = 20.0*DEG2RAD; // initial guess for geometric pitch
+        double frac = (r - Rhub) / (R - Rhub); // 0..1 along blade
 
-        for(int iter=0;iter<50;++iter){
-            double Vax = 0.0*(1+a)+1e-6;
-            double Vtan = omega*r*(1.0 - ap);
-            double Vrel = std::sqrt(Vax*Vax + Vtan*Vtan);
-            double phi = std::atan2(Vax,Vtan);
-            double alpha = theta - phi;
-            double Cl = Airfoil::Cl(alpha);
-            double Cd = Airfoil::Cd(alpha);
+        // ---------------- Lift per unit span ----------------
+        // Linear from near zero at hub to max at tip
+        double Lprime_r = Lprime_tip * frac;
 
-            double L = 0.5*rho*Vrel*Vrel*Cl; // per unit chord
-            double D = 0.5*rho*Vrel*Vrel*Cd;
+        // Small relative velocity due to rotation
+        double Vrel = omega * r;       // assume hover, Vax ~ 0
+        double phi = 0.0;              // initial guess
+        double theta = 20.0*DEG2RAD;   // geometric pitch initial guess
 
-            double Fn = L*std::cos(phi)-D*std::sin(phi);
-            double Ft = L*std::sin(phi)+D*std::cos(phi);
-
-            double sigma = B*1.0/(2*PI*r); // chord unknown
-            double a_new = Fn/(4*PI*r*rho*Vrel*Vrel + 1e-6);
-            double ap_new = Ft/(4*PI*r*rho*Vrel*Vtan + 1e-6);
-
-            a = 0.7*a + 0.3*a_new;
-            ap = 0.7*ap + 0.3*ap_new;
-        }
-
-        // Compute chord to match thrust T/B
-        double Vax = omega*r*0.0 + 1e-6;
-        double Vtan = omega*r*(1.0 - ap);
-        double Vrel = std::sqrt(Vax*Vax + Vtan*Vtan);
-        double phi = std::atan2(Vax,Vtan);
-        double alpha = theta - phi;
+        // ---------------- Compute local chord ----------------
+        double alpha = theta - phi;    // rad
         double Cl = Airfoil::Cl(alpha);
+        double c = (2.0*Lprime_r/(rho*Vrel*Vrel*Cl));
 
-        double Lprime = T/(B*(R - Rhub)); // N/m per blade
-        double c = 2.0*Lprime/(rho*Vrel*Vrel*Cl + 1e-6); // physical chord
+        // ---------------- Clamp chord ----------------
+
+        // ---------------- Compute geometric pitch (twist) ----------------
+        // phi = inflow angle, for hover a ~ 0 → phi ~ 0, so geometric pitch ~ angle of attack
+        double alpha_desired = 4.0*DEG2RAD; // small positive angle of attack
+        double theta_geom = phi + alpha_desired;
+
+        r_out[i] = r;
         chord_out[i] = c;
-        alpha_out[i] = theta/DEG2RAD; // store geometric pitch in deg
+        alpha_out[i] = theta_geom*RAD2DEG;
     }
 }
 
 // ---------------------- MAIN ----------------------
 int main(){
     // ---------------------- User Inputs ----------------------
-    double R = 0.16;
+    double R = 0.12;
     double Rhub = 0.04;
     int B = 3;
-    double T = 18.0;
+    double T = 36.0;
     double rho = 1.225;
     double rpm = 6500;
     int N = 40;
