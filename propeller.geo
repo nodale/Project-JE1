@@ -1,30 +1,27 @@
-// Gmsh geometry generated from STL only
+SetFactory("OpenCASCADE");
+Geometry.OCCParallel = 0;
 
-R  = 0.2;
-Rh = 0.032;
-H  = 0.1;
-A  = 1.5708;
-Ab = 0.785398;
+B = 3;           // Number of blades
+theta = 2*Pi/B;   // Sector angle in degrees
+H = 0.2;         // Cylinder height
+R = 0.4;         // Cylinder outer radius
+Rhub = 0.032;      // Hub radius
 
-Merge "blade.stl";
+b() = ShapeFromFile("blade.brep");
+//Merge "blade.brep";
+Surface Loop(10) = {b()};
+Volume(10) = {10};
 
-DefineConstant[
-  angle = {40, Min 20, Max 120, Step 1, Name "Angle for surface detection"},
-  forceParametrizablePatches = {1, Choices{0,1}, Name "Force creation of parametrizable patches"},
-  includeBoundary = 1,
-  curveAngle = 180
-];
+//Cylinder(1) = {0,0,-H/2, 0,0,H, R, theta};
+//
+//Cylinder(2) = {0,0,-H/2, 0,0,H, Rhub, theta};
+//
+//sector() = BooleanDifference{ Volume{1}; Delete; }{ Volume{2}; Delete;};
+//
+//Rotate	{{0,0,1}, {0,0,0}, -theta/2} { Volume{sector()};}
 
-ClassifySurfaces{angle*Pi/180, includeBoundary, forceParametrizablePatches, curveAngle*Pi/180};
-CreateGeometry;
+//fin() = BooleanDifference{ Volume{sector()}; Delete; }{ Volume{b()}; Delete;};
 
-// Push blade slightly to avoid numerical touching
-Translate {0.0001, 0, 0} { Surface{:}; }
+//Mesh 3;
 
-Surface Loop(1) = Surface{:};
-Volume(1) = {1};
-
-Physical Volume("blade") = {1};
-Physical Surface("inlet") = Surface In BoundingBox{-R,-R,-H/2-1e-6, R,R,-H/2+1e-6};
-Physical Surface("outlet") = Surface In BoundingBox{-R,-R,H/2-1e-6, R,R,H/2+1e-6};
 
