@@ -1,15 +1,21 @@
 SetFactory("OpenCASCADE");
 Geometry.OCCParallel = 0;
+Geometry.OCCBooleanPreserveNumbering = 0;
 
 B = 3;           // Number of blades
 theta = 2*Pi/B;   // Sector angle in degrees
-H = 0.2;         // Cylinder height
-R = 0.4;         // Cylinder outer radius
-Rhub = 0.032;      // Hub radius
+H = 0.14;         // Cylinder height
+R = 0.2;         // Cylinder outer radius
+Rhub = 0.04;      // Hub radius
 
-b() = ShapeFromFile("blade.brep");
-Surface Loop(10) = {b()};
-Volume(10) = {10};
+Mesh.Algorithm = 6;
+Mesh.MeshSizeFromPoints = 1;
+Mesh.MeshSizeFromCurvature = 1;
+Mesh.MinimumElementsPerTwoPi = 100;
+Mesh.MeshSizeExtendFromBoundary = 1;
+Mesh.ElementOrder = 1;
+Mesh.HighOrderOptimize = 2;
+Mesh.MshFileVersion = 2.2;
 
 Cylinder(1) = {0,0,-H/2, 0,0,H, R, theta};
 
@@ -19,8 +25,35 @@ sector() = BooleanDifference{ Volume{1}; Delete; }{ Volume{2}; Delete;};
 
 Rotate	{{0,0,1}, {0,0,0}, -theta/2} { Volume{sector()};}
 
-fin() = BooleanDifference{ Volume{sector()}; Delete; }{ Volume{10}; Delete;};
+Physical Surface("cylic_1") = {5};
+Physical Surface("cylic_2") = {3};
+Physical Surface("air") = {6, 2, 4, 1};
 
-//Mesh 3;
+b() = ShapeFromFile("blade.brep");
+Surface Loop(10) = {b()};
+b[] = {b()};
+Physical Surface("blade") = {b()};
+Volume(10) = {10};
+fin() = BooleanDifference{ Volume{sector()}; Delete; }{ Volume{10}; Delete;};
+Physical Volume("all") = {fin()};
+
+Point(10000) = {0,0,0, 1.0}; // reference point
+Field[1] = Distance;
+Field[1].NodesList = {10000};
+Field[2] = Threshold;
+Field[2].IField = 1;
+Field[2].LcMin = 0.10; 
+Field[2].LcMax = 0.18;  
+Field[2].DistMin = 0.01;
+Field[2].DistMax = 0.04;
+Background Field = 2;
+
+Mesh 2;
+//RecombineMesh;
+Mesh 3;
+
+Mesh.RecombineAll = 0;
+
+
 
 
