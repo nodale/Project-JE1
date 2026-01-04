@@ -6,7 +6,7 @@ B = 3;           // Number of blades
 theta = 2*Pi/B;   // Sector angle in degrees
 H = 0.14;         // Cylinder height
 R = 0.2;         // Cylinder outer radius
-Rhub = 0.04;      // Hub radius
+Rhub = 0.05;      // Hub radius
 
 Mesh.Algorithm = 6;
 Mesh.MeshSizeFromPoints = 1;
@@ -25,8 +25,8 @@ sector() = BooleanDifference{ Volume{1}; Delete; }{ Volume{2}; Delete;};
 
 Rotate	{{0,0,1}, {0,0,0}, -theta/2} { Volume{sector()};}
 
-Physical Surface("cylic_1") = {5};
-Physical Surface("cylic_2") = {3};
+Physical Surface("cyclic_1") = {5};
+Physical Surface("cyclic_2") = {3};
 Physical Surface("air") = {6, 2, 4, 1};
 
 b() = ShapeFromFile("blade.brep");
@@ -47,6 +47,9 @@ Field[2].LcMax = 0.18;
 Field[2].DistMin = 0.01;
 Field[2].DistMax = 0.04;
 Background Field = 2;
+
+Transfinite Line{2, 4, 7, 8, 5, 10} = 12;
+Transfinite Line{6, 9, 11, 12} = 36;
 
 Mesh 2;
 //RecombineMesh;
