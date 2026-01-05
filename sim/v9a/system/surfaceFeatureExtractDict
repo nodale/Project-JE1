@@ -1,0 +1,38 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  v2512                                 |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      surfaceFeatureExtractDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+geometry
+{
+    blade
+    {
+        type triSurfaceMesh;
+        file "blade.stl";
+    }
+}
+
+extractFeatures
+{
+    blade
+    {
+        // Feature angle defines which edges are sharp
+        // 30–60° is common for blades
+        featureAngle 30;
+    }
+}
+
+// Output options
+writeObj true;
+

@@ -8,6 +8,7 @@
 #include <iomanip>
 #include <algorithm>
 #include <complex>
+#include <functional>
 
 constexpr double PI = 3.14159265358979323846;
 constexpr double DEG2RAD = PI/180.0;
@@ -87,33 +88,141 @@ std::vector<std::vector<Vec3>> buildBladeGeometry(
 }
 
 // ---------------------- STL Writing ----------------------
-void writeSTL(const std::string& filename,const std::vector<std::vector<Vec3>>& bladeRings){
+void triangulateCapStrip(
+    const std::vector<Vec3>& ring,
+    bool flip,
+    const std::function<void(Vec3,Vec3,Vec3)>& writeTri)
+{
+    int n = ring.size();
+    int i0 = 0;
+    int i1 = n - 1;
+
+    while (i1 - i0 > 1) {
+        if (!flip) {
+            writeTri(ring[i0], ring[i0+1], ring[i1]);
+            writeTri(ring[i0+1], ring[i1-1], ring[i1]);
+        } else {
+            writeTri(ring[i0], ring[i1], ring[i0+1]);
+            writeTri(ring[i0+1], ring[i1], ring[i1-1]);
+        }
+        ++i0;
+        --i1;
+    }
+
+    // odd count: one final triangle
+    if (i1 - i0 == 1) {
+        if (!flip)
+            writeTri(ring[i0], ring[i0+1], ring[i1]);
+        else
+            writeTri(ring[i0], ring[i1], ring[i0+1]);
+    }
+}
+
+void writeSTL(const std::string& filename,
+              const std::vector<std::vector<Vec3>>& bladeRings)
+{
     std::ofstream out(filename);
     out << "solid blade\n";
+
     int NR = bladeRings.size();
     int NP = bladeRings[0].size();
 
-    auto writeTri=[&](Vec3 a,Vec3 b,Vec3 c){
-        Vec3 u{b[0]-a[0],b[1]-a[1],b[2]-a[2]};
-        Vec3 v{c[0]-a[0],c[1]-a[1],c[2]-a[2]};
-        Vec3 n{u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0]};
-        out<<"  facet normal "<<n[0]<<" "<<n[1]<<" "<<n[2]<<"\n";
-        out<<"    outer loop\n";
-        out<<"      vertex "<<a[0]<<" "<<a[1]<<" "<<a[2]<<"\n";
-        out<<"      vertex "<<b[0]<<" "<<b[1]<<" "<<b[2]<<"\n";
-        out<<"      vertex "<<c[0]<<" "<<c[1]<<" "<<c[2]<<"\n";
-        out<<"    endloop\n  endfacet\n";
+    auto writeTri = [&](Vec3 a, Vec3 b, Vec3 c){
+        Vec3 u{b[0]-a[0], b[1]-a[1], b[2]-a[2]};
+        Vec3 v{c[0]-a[0], c[1]-a[1], c[2]-a[2]};
+        Vec3 n{ u[1]*v[2]-u[2]*v[1],
+                u[2]*v[0]-u[0]*v[2],
+                u[0]*v[1]-u[1]*v[0] };
+
+        out << "  facet normal " << n[0] << " " << n[1] << " " << n[2] << "\n";
+        out << "    outer loop\n";
+        out << "      vertex " << a[0] << " " << a[1] << " " << a[2] << "\n";
+        out << "      vertex " << b[0] << " " << b[1] << " " << b[2] << "\n";
+        out << "      vertex " << c[0] << " " << c[1] << " " << c[2] << "\n";
+        out << "    endloop\n";
+        out << "  endfacet\n";
     };
 
-    for(int i=0;i<NR-1;++i){
-        for(int j=0;j<NP;++j){
-            int jn = (j+1)%NP;
-            writeTri(bladeRings[i][j],bladeRings[i+1][j],bladeRings[i+1][jn]);
-            writeTri(bladeRings[i][j],bladeRings[i+1][jn],bladeRings[i][jn]);
+    /* ---- side surface ---- */
+    for(int i = 0; i < NR-1; ++i){
+        for(int j = 0; j < NP; ++j){
+            int jn = (j+1) % NP;
+            writeTri(bladeRings[i][j],
+                     bladeRings[i+1][j],
+                     bladeRings[i+1][jn]);
+            writeTri(bladeRings[i][j],
+                     bladeRings[i+1][jn],
+                     bladeRings[i][jn]);
         }
     }
+
+    /* ---- helper to compute centroid ---- */
+    auto centroid = [&](const std::vector<Vec3>& ring){
+        Vec3 c{0,0,0};
+        for(const auto& p : ring){
+            c[0] += p[0];
+            c[1] += p[1];
+            c[2] += p[2];
+        }
+        double inv = 1.0 / ring.size();
+        c[0] *= inv; c[1] *= inv; c[2] *= inv;
+        return c;
+    };
+
+    /* ---- root cap ---- */
+    triangulateCapStrip(
+        bladeRings[0],
+        true,   // flip so normals point outward
+        writeTri);
+
+    /* ---- tip cap ---- */
+    triangulateCapStrip(
+        bladeRings[NR-1],
+        false,
+        writeTri);
+
     out << "endsolid blade\n";
+}
+
+void writeOBJ(
+    const std::string& filename,
+    const std::vector<std::vector<Vec3>>& bladeRings,
+    int hubLayers = 4,    // number of layers from hub rectangle to outer ring
+    double hubScale = 0.2 // size of the hub rectangle relative to outer ring
+)
+{
+    std::ofstream out(filename);
+    if(!out) { std::cerr << "Failed to open " << filename << "\n"; return; }
+
+    int NR = bladeRings.size();
+    int NP = bladeRings[0].size();
+
+    auto idx = [&](int i,int j,int ringOffset){ return ringOffset + i*NP + j + 1; };
+
+    int vertexOffset = 0;
+
+    // ---- write blade side vertices ----
+    for(int i=0;i<NR;++i)
+        for(int j=0;j<NP;++j){
+            const auto& p = bladeRings[i][j];
+            out << "v " << p[0] << " " << p[1] << " " << p[2] << "\n";
+        }
+
+    vertexOffset += NR*NP;
+
+    // ---- write side quads ----
+    for(int i=0;i<NR-1;++i)
+        for(int j=0;j<NP;++j){
+            int jn = (j+1)%NP;
+            out << "f "
+                << idx(i,j,0) << " "
+                << idx(i+1,j,0) << " "
+                << idx(i+1,jn,0) << " "
+                << idx(i,jn,0) << "\n";
+        }
+
     out.close();
+    std::cout << "✔ Blade OBJ fully watertight, quad-only, lofted hub: " << filename << "\n";
 }
 
 // ---------------------- BEMT Chord & Twist Solver ----------------------
@@ -217,62 +326,6 @@ void computeChordTwistBEMT(
     }
 }
 
-// ---------------------- GMSH GEO Generation ----------------------
-void writeGmshGeo(const std::string& filename,
-                  double Rdomain,
-                  double Rhub,
-                  double Hdomain,
-                  int B)
-{
-    std::ofstream out(filename);
-
-    const double A  = 2.0 * M_PI / B;
-    const double Ab = 0.5 * A;
-
-    // small offset to avoid touching periodic faces
-    const double eps = 1e-4;
-
-    // ---------------- Header ----------------
-    out << "// Gmsh geometry generated from STL only\n\n";
-
-    out << "R  = " << Rdomain << ";\n";
-    out << "Rh = " << Rhub << ";\n";
-    out << "H  = " << Hdomain << ";\n";
-    out << "A  = " << A << ";\n";
-    out << "Ab = " << Ab << ";\n\n";
-
-    // ---------------- Merge STL ----------------
-    out << "Merge \"blade.stl\";\n\n";
-
-    // ---------------- Classify STL surfaces ----------------
-    out << "DefineConstant[\n"
-           "  angle = {40, Min 20, Max 120, Step 1, Name \"Angle for surface detection\"},\n"
-           "  forceParametrizablePatches = {1, Choices{0,1}, Name \"Force creation of parametrizable patches\"},\n"
-           "  includeBoundary = 1,\n"
-           "  curveAngle = 180\n"
-           "];\n\n";
-
-    out << "ClassifySurfaces{angle*Pi/180, includeBoundary, forceParametrizablePatches, curveAngle*Pi/180};\n";
-    out << "CreateGeometry;\n\n";
-
-    // ---------------- Optional small translation ----------------
-    out << "// Push blade slightly to avoid numerical touching\n";
-    out << "Translate {" << eps << ", 0, 0} { Surface{:}; }\n\n";
-
-    // ---------------- Create volume from all surfaces ----------------
-    out << "Surface Loop(1) = Surface{:};\n";
-    out << "Volume(1) = {1};\n\n";
-
-    // ---------------- Physical groups ----------------
-    out << "Physical Volume(\"blade\") = {1};\n";
-
-    // Optional: bounding box surfaces if needed for inlet/outlet
-    out << "Physical Surface(\"inlet\") = Surface In BoundingBox{-R,-R,-H/2-1e-6, R,R,-H/2+1e-6};\n";
-    out << "Physical Surface(\"outlet\") = Surface In BoundingBox{-R,-R,H/2-1e-6, R,R,H/2+1e-6};\n\n";
-
-    out.close();
-}
-
 
 // ---------------------- MAIN ----------------------
 int main(){
@@ -283,14 +336,14 @@ int main(){
     double T = 18.0;
     double rho = 1.225;
     double rpm = 6500;
-    int N = 80;
+    int N = 50;
 
     double disX = 0.04, disY = 0.18, backFat=1.12;
     double offset_root_frac = 0.0, offset_tip_frac = -0.1;
 
     // ---------------------- Airfoil ----------------------
     std::vector<double> px, py;
-    genJoukowsky(disX, disY, backFat, 80, px, py);
+    genJoukowsky(disX, disY, backFat, 25, px, py);
     std::vector<std::array<double,2>> airfoilPts;
     for(size_t i=0;i<px.size();++i) airfoilPts.push_back({px[i],py[i]});
 
@@ -304,7 +357,7 @@ int main(){
 
     auto rings = buildBladeGeometry(r_stations,chord_stations,twist_rad,airfoilPts,
                                     offset_root_frac,offset_tip_frac);
-    writeSTL("blade.stl",rings);
+    writeOBJ("blade.obj",rings);
 
     // ---------------------- Output Data ----------------------
     std::ofstream ofs("constant_gamma_twist.dat");
@@ -313,12 +366,7 @@ int main(){
         ofs<<r_stations[i]<<" "<<alpha_stations[i]<<" "<<chord_stations[i]<<"\n";
     ofs.close();
 
-    std::cout<<"✔ Blade STL generated: blade.stl\n";
     std::cout<<"✔ Chord & twist data: constant_gamma_twist.dat\n";
-
-    
-    writeGmshGeo("propeller.geo", 0.2,Rhub, 0.1, B);
-
     return 0;
 }
 

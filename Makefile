@@ -3,7 +3,7 @@ CXXFLAGS = -std=c++17 -O2 -Wall
 
 TARGET = exec
 
-SRC = src/test20.cpp
+SRC = src/test19.cpp
 
 all: $(TARGET)
 

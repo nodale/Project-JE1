@@ -1,0 +1,117 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  v2512                                 |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      blockMeshDict;
+}
+
+scale 1;
+
+// -------------------- PARAMETERS --------------------
+
+B       3;          // number of blades
+Rhub    0.04;        // hub radius
+Rout    0.2;        // outer radius
+H       0.16;        // height of domain
+
+nR      80;         // radial cells
+nTheta  80;         // circumferential cells
+nZ      60;          // axial cells (2D)
+
+// ---------------------------------------------------
+
+theta   #calc "2.0*Foam::constant::mathematical::pi/$B";
+cT      #calc "cos($theta)";
+sT      #calc "sin($theta)";
+
+// -------------------- VERTICES --------------------
+
+vertices
+(
+    // bottom inner
+    ( #calc "$Rhub"              0               #calc "-0.5*$H" )
+    ( #calc "$Rhub*$cT"          #calc "$Rhub*$sT" #calc "-0.5*$H" )
+
+    // bottom outer
+    ( #calc "$Rout"              0               #calc "-0.5*$H" )
+    ( #calc "$Rout*$cT"          #calc "$Rout*$sT" #calc "-0.5*$H" )
+
+    // top inner
+    ( #calc "$Rhub"              0               #calc "0.5*$H" )
+    ( #calc "$Rhub*$cT"          #calc "$Rhub*$sT" #calc "0.5*$H" )
+
+    // top outer
+    ( #calc "$Rout"              0               #calc "0.5*$H" )
+    ( #calc "$Rout*$cT"          #calc "$Rout*$sT" #calc "0.5*$H" )
+);
+
+// -------------------- BLOCK --------------------
+
+blocks
+(
+    hex (0 2 3 1 4 6 7 5)
+    ($nR $nTheta $nZ)
+    simpleGrading (1 1 1)
+);
+
+// -------------------- EDGES --------------------
+
+edges
+(
+    arc 0 1 ( #calc "$Rhub*cos($theta/2)"  #calc "$Rhub*sin($theta/2)"  #calc "-0.5*$H" )
+    arc 2 3 ( #calc "$Rout*cos($theta/2)"  #calc "$Rout*sin($theta/2)"  #calc "-0.5*$H" )
+
+    arc 4 5 ( #calc "$Rhub*cos($theta/2)"  #calc "$Rhub*sin($theta/2)"  #calc "0.5*$H" )
+    arc 6 7 ( #calc "$Rout*cos($theta/2)"  #calc "$Rout*sin($theta/2)"  #calc "0.5*$H" )
+);
+
+// -------------------- PATCHES --------------------
+
+boundary
+(
+    cyclic_1
+    {
+        type cyclicAMI;
+        neighbourPatch cyclic_2;
+
+        faces
+        (
+            (0 2 3 1)
+        );
+    }
+
+    cyclic_2
+    {
+        type cyclicAMI;
+        neighbourPatch cyclic_1;
+
+        faces
+        (
+            (4 6 7 5)
+        );
+    }
+
+    air
+    {
+        type empty;
+        faces
+        (
+            (0 1 5 4)
+            (2 6 7 3)
+            (0 4 6 2)
+            (1 3 7 5)
+        );
+    }
+);
+
+mergePatchPairs ();
+

@@ -8,6 +8,7 @@
 #include <iomanip>
 #include <algorithm>
 #include <complex>
+#include <functional>
 
 constexpr double PI = 3.14159265358979323846;
 constexpr double DEG2RAD = PI/180.0;
@@ -87,33 +88,100 @@ std::vector<std::vector<Vec3>> buildBladeGeometry(
 }
 
 // ---------------------- STL Writing ----------------------
-void writeSTL(const std::string& filename,const std::vector<std::vector<Vec3>>& bladeRings){
+void triangulateCapStrip(
+    const std::vector<Vec3>& ring,
+    bool flip,
+    const std::function<void(Vec3,Vec3,Vec3)>& writeTri)
+{
+    int n = ring.size();
+    int i0 = 0;
+    int i1 = n - 1;
+
+    while (i1 - i0 > 1) {
+        if (!flip) {
+            writeTri(ring[i0], ring[i0+1], ring[i1]);
+            writeTri(ring[i0+1], ring[i1-1], ring[i1]);
+        } else {
+            writeTri(ring[i0], ring[i1], ring[i0+1]);
+            writeTri(ring[i0+1], ring[i1], ring[i1-1]);
+        }
+        ++i0;
+        --i1;
+    }
+
+    // odd count: one final triangle
+    if (i1 - i0 == 1) {
+        if (!flip)
+            writeTri(ring[i0], ring[i0+1], ring[i1]);
+        else
+            writeTri(ring[i0], ring[i1], ring[i0+1]);
+    }
+}
+
+void writeSTL(const std::string& filename,
+              const std::vector<std::vector<Vec3>>& bladeRings)
+{
     std::ofstream out(filename);
     out << "solid blade\n";
+
     int NR = bladeRings.size();
     int NP = bladeRings[0].size();
 
-    auto writeTri=[&](Vec3 a,Vec3 b,Vec3 c){
-        Vec3 u{b[0]-a[0],b[1]-a[1],b[2]-a[2]};
-        Vec3 v{c[0]-a[0],c[1]-a[1],c[2]-a[2]};
-        Vec3 n{u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0]};
-        out<<"  facet normal "<<n[0]<<" "<<n[1]<<" "<<n[2]<<"\n";
-        out<<"    outer loop\n";
-        out<<"      vertex "<<a[0]<<" "<<a[1]<<" "<<a[2]<<"\n";
-        out<<"      vertex "<<b[0]<<" "<<b[1]<<" "<<b[2]<<"\n";
-        out<<"      vertex "<<c[0]<<" "<<c[1]<<" "<<c[2]<<"\n";
-        out<<"    endloop\n  endfacet\n";
+    auto writeTri = [&](Vec3 a, Vec3 b, Vec3 c){
+        Vec3 u{b[0]-a[0], b[1]-a[1], b[2]-a[2]};
+        Vec3 v{c[0]-a[0], c[1]-a[1], c[2]-a[2]};
+        Vec3 n{ u[1]*v[2]-u[2]*v[1],
+                u[2]*v[0]-u[0]*v[2],
+                u[0]*v[1]-u[1]*v[0] };
+
+        out << "  facet normal " << n[0] << " " << n[1] << " " << n[2] << "\n";
+        out << "    outer loop\n";
+        out << "      vertex " << a[0] << " " << a[1] << " " << a[2] << "\n";
+        out << "      vertex " << b[0] << " " << b[1] << " " << b[2] << "\n";
+        out << "      vertex " << c[0] << " " << c[1] << " " << c[2] << "\n";
+        out << "    endloop\n";
+        out << "  endfacet\n";
     };
 
-    for(int i=0;i<NR-1;++i){
-        for(int j=0;j<NP;++j){
-            int jn = (j+1)%NP;
-            writeTri(bladeRings[i][j],bladeRings[i+1][j],bladeRings[i+1][jn]);
-            writeTri(bladeRings[i][j],bladeRings[i+1][jn],bladeRings[i][jn]);
+    /* ---- side surface ---- */
+    for(int i = 0; i < NR-1; ++i){
+        for(int j = 0; j < NP; ++j){
+            int jn = (j+1) % NP;
+            writeTri(bladeRings[i][j],
+                     bladeRings[i+1][j],
+                     bladeRings[i+1][jn]);
+            writeTri(bladeRings[i][j],
+                     bladeRings[i+1][jn],
+                     bladeRings[i][jn]);
         }
     }
+
+    /* ---- helper to compute centroid ---- */
+    auto centroid = [&](const std::vector<Vec3>& ring){
+        Vec3 c{0,0,0};
+        for(const auto& p : ring){
+            c[0] += p[0];
+            c[1] += p[1];
+            c[2] += p[2];
+        }
+        double inv = 1.0 / ring.size();
+        c[0] *= inv; c[1] *= inv; c[2] *= inv;
+        return c;
+    };
+
+    /* ---- root cap ---- */
+    triangulateCapStrip(
+        bladeRings[0],
+        true,   // flip so normals point outward
+        writeTri);
+
+    /* ---- tip cap ---- */
+    triangulateCapStrip(
+        bladeRings[NR-1],
+        false,
+        writeTri);
+
     out << "endsolid blade\n";
-    out.close();
 }
 
 // ---------------------- BEMT Chord & Twist Solver ----------------------
@@ -234,7 +302,7 @@ int main(){
 
     // ---------------------- Airfoil ----------------------
     std::vector<double> px, py;
-    genJoukowsky(disX, disY, backFat, 80, px, py);
+    genJoukowsky(disX, disY, backFat, 40, px, py);
     std::vector<std::array<double,2>> airfoilPts;
     for(size_t i=0;i<px.size();++i) airfoilPts.push_back({px[i],py[i]});
 
