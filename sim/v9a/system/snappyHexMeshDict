@@ -29,8 +29,8 @@ geometry
 
 castellatedMeshControls
 {
-    maxLocalCells 1000000;
-    maxGlobalCells 20000000;
+    maxLocalCells 2000000;
+    maxGlobalCells 30000000;
     minRefinementCells 10;
     nCellsBetweenLevels 2;
 
@@ -51,7 +51,7 @@ castellatedMeshControls
         }
     }
 
-    resolveFeatureAngle 60;
+    resolveFeatureAngle 45;
     
     // Optional: refinement box around blade
     refinementRegions
@@ -59,7 +59,7 @@ castellatedMeshControls
         outerCylinder
         {
             mode inside;
-            levels ((1 1));
+            levels ((2 3));
         }
     }
 
@@ -69,12 +69,12 @@ castellatedMeshControls
 
 snapControls
 {
-    nSmoothPatch 10;
-    tolerance 1e-3;
-    nSolveIter 20;
-    nRelaxIter 4;
-    nFeatureSnapIter 5;
-    implicitFeatureSnap false;
+    nSmoothPatch 20;
+    tolerance 1e-4;
+    nSolveIter 30;
+    nRelaxIter 10;
+    nFeatureSnapIter 10;
+    implicitFeatureSnap true;
     explicitFeatureSnap true;
 }
 
@@ -83,46 +83,47 @@ addLayersControls
     relativeSizes true;
     layers
     {
+        "blade.*"
+        {
+            nSurfaceLayers 4;        // more layers on blade
+        }
     }
     expansionRatio 1.0;
-    finalLayerThickness 0.01;
-    minThickness 0.004;
-    nGrow 0;
-    featureAngle 60;
-    nRelaxIter 3;
-    nSmoothSurfaceNormals 4;
-    nSmoothNormals 6;
-    nSmoothThickness 4;
-    maxFaceThicknessRatio 0.5;
-    maxThicknessToMedialRatio 0.3;
-    minMedialAxisAngle 90;
-    nBufferCellsNoExtrude 0;
-    nLayerIter 50;
+    finalLayerThickness 0.002;      // thinner layer to improve concave cells
+    minThickness 0.001;
+    nGrow 1;                         // slightly grow mesh around features
+    featureAngle 40;                 // catch sharper angles
+    nRelaxIter 10;
+    nSmoothSurfaceNormals 6;
+    nSmoothNormals 10;
+    nSmoothThickness 10;
+    maxFaceThicknessRatio 0.4;
+    maxThicknessToMedialRatio 0.25;
+    minMedialAxisAngle 80;
+    nBufferCellsNoExtrude 2;         // prevents under-resolved cells
+    nLayerIter 100; 
 }
 
 meshQualityControls
 {
-    maxNonOrtho 65;
-
-    maxBoundarySkewness 20;
-    maxInternalSkewness 4;
-
-    maxConcave 80;
-    minVol 1e-13;
-    minTetQuality -1;
-    minArea -1;
+    maxNonOrtho 60;                  // stricter to avoid bad cells
+    maxBoundarySkewness 15;
+    maxInternalSkewness 3;
+    maxConcave 75;
+    minVol 1e-12;                    // relax minimum volume slightly
+    minTetQuality 0.1;                // ensure positive tets
+    minArea 1e-10;
     minTwist 0.01;
-    minDeterminant 0.001;
-    minFaceWeight 0.05;
-    minVolRatio 0.01;
+    minDeterminant 0.005;            // stricter determinant
+    minFaceWeight 0.1;
+    minVolRatio 0.05;
     minTriangleTwist -1;
-    nSmoothScale 4;
-    errorReduction 0.75;
+    nSmoothScale 6;
+    errorReduction 0.5;
     relaxed
     {
-        maxNonOrtho 75;
+        maxNonOrtho 70;
     }
 }
 
-mergeTolerance 1e-6;
-
+mergeTolerance 1e-7; 
