@@ -23,9 +23,9 @@ Rhub    0.04;        // hub radius
 Rout    0.2;        // outer radius
 H       0.16;        // height of domain
 
-nR      80;         // radial cells
-nTheta  80;         // circumferential cells
-nZ      60;          // axial cells (2D)
+nR      100;         // radial cells
+nTheta  100;         // circumferential cells
+nZ      100;          // axial cells (2D)
 
 // ---------------------------------------------------
 
